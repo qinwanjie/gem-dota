@@ -235,6 +235,11 @@ of answering questions from them, see the Recipes docs.
 
 ### Fixed
 
+- **Replay parsing with truncated visual-entity baselines.** A malformed
+  `CParticleSystem` or `CRagdollManager` baseline no longer aborts the match;
+  Gem discards that class's partial baseline state and continues decoding its
+  packet updates. Gameplay entity baselines still fail on truncation.
+
 - **Ward placers have the hero's real name.** `WardEvent.placer` was the
   hero's class name lowercased, so compound heroes came out wrong:
   `npc_dota_hero_ancientapparition`, `npc_dota_hero_emberspirit`. It now

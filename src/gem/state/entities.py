@@ -15,13 +15,14 @@ References:
 from __future__ import annotations
 
 import enum
+import logging
 import math
 import re
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import Any
 
-from gem.binary.reader import BitReader
+from gem.binary.reader import BitReader, BufferReadError
 from gem.errors import EntityStateError
 from gem.schema.field_path.models import CompactFieldPath
 from gem.schema.field_reader import read_fields
@@ -44,6 +45,8 @@ from gem.state.string_table import StringTables
 _INDEX_BITS: int = 14
 _HANDLE_MASK: int = (1 << _INDEX_BITS) - 1
 _GAME_BUILD_RE = re.compile(r"/dota_v(\d+)/")
+_COSMETIC_BASELINE_CLASSES = frozenset({"CParticleSystem", "CRagdollManager"})
+logger = logging.getLogger(__name__)
 
 
 def game_build_from_game_dir(game_dir: str) -> int:
@@ -644,6 +647,7 @@ class EntityManager:
         self.classes_by_id: dict[int, ClassInfo] = {}
         self.classes_by_name: dict[str, ClassInfo] = {}
         self.class_baselines: dict[int, bytes] = {}
+        self._unusable_cosmetic_baselines: dict[int, bytes] = {}
         self.game_build: int = 0
         self.class_id_size: int = 0
         self._class_info_ready: bool = False
@@ -798,7 +802,7 @@ class EntityManager:
                             f"({ci.name}) creating entity {index}"
                         )
                     if ci.serializer is not None:
-                        read_fields(BitReader(baseline), ci.serializer, entity._field_state)
+                        self._apply_baseline(entity, ci, baseline)
                         read_fields(r, ci.serializer, entity._field_state)
 
                     op = EntityOp.CREATED | EntityOp.ENTERED
@@ -841,6 +845,29 @@ class EntityManager:
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    def _apply_baseline(self, entity: Entity, ci: ClassInfo, baseline: bytes) -> None:
+        """Apply a class baseline, tolerating malformed visual-only baselines.
+
+        Some replay builds contain truncated baselines for particle and ragdoll
+        entities. Neither class is read by Gem's gameplay extractors. A failed
+        decode must not leave its partially populated state on the entity; its
+        packet delta is still decoded normally. All other classes remain strict.
+        """
+        serializer = ci.serializer
+        if serializer is None or self._unusable_cosmetic_baselines.get(ci.class_id) is baseline:
+            return
+
+        state = FieldState()
+        try:
+            read_fields(BitReader(baseline), serializer, state)
+        except BufferReadError:
+            if ci.name not in _COSMETIC_BASELINE_CLASSES:
+                raise
+            self._unusable_cosmetic_baselines[ci.class_id] = baseline
+            logger.warning("Skipping truncated %s baseline (class id %d)", ci.name, ci.class_id)
+            return
+        entity._field_state = state
 
     def _update_baselines(self) -> None:
         if not self._class_info_ready:

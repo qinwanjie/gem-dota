@@ -1446,6 +1446,72 @@ class TestEntityManagerPacketEntities:
             em.on_packet_entities(Msg())
 
 
+class TestCosmeticBaselineCompatibility:
+    @pytest.mark.parametrize("class_name", ["CParticleSystem", "CRagdollManager"])
+    def test_truncated_cosmetic_baseline_discards_partial_state_and_is_cached(
+        self, monkeypatch, class_name
+    ):
+        from gem.binary.reader import BufferReadError
+        from gem.schema.sendtable import Serializer
+
+        manager = EntityManager(serializers={}, string_tables=StringTables())
+        ci = ClassInfo(class_id=7, name=class_name, serializer=Serializer(class_name, 0))
+        baseline = bytes(bytearray(b"truncated baseline"))
+        calls = 0
+
+        def fail_after_partial_write(reader, serializer, state):
+            nonlocal calls
+            calls += 1
+            state._set_compact((0,), 123)
+            raise BufferReadError("truncated")
+
+        monkeypatch.setattr("gem.state.entities.read_fields", fail_after_partial_write)
+        first = Entity(index=0, serial=0, cls=ci)
+        manager._apply_baseline(first, ci, baseline)
+        assert first._field_state._get_compact((0,)) is None
+
+        manager._apply_baseline(Entity(index=1, serial=0, cls=ci), ci, baseline)
+        assert calls == 1
+
+        replacement = bytes(bytearray(b"another baseline"))
+        manager._apply_baseline(Entity(index=2, serial=0, cls=ci), ci, replacement)
+        assert calls == 2
+
+    def test_truncated_gameplay_baseline_remains_an_error(self, monkeypatch):
+        from gem.binary.reader import BufferReadError
+        from gem.schema.sendtable import Serializer
+
+        manager = EntityManager(serializers={}, string_tables=StringTables())
+        ci = ClassInfo(
+            class_id=8,
+            name="CDOTA_Unit_Hero_Axe",
+            serializer=Serializer("CDOTA_Unit_Hero_Axe", 0),
+        )
+
+        def fail(reader, serializer, state):
+            raise BufferReadError("truncated")
+
+        monkeypatch.setattr("gem.state.entities.read_fields", fail)
+        with pytest.raises(BufferReadError, match="truncated"):
+            manager._apply_baseline(Entity(index=0, serial=0, cls=ci), ci, b"broken")
+
+    def test_valid_cosmetic_baseline_is_applied(self, monkeypatch):
+        from gem.schema.sendtable import Serializer
+
+        manager = EntityManager(serializers={}, string_tables=StringTables())
+        ci = ClassInfo(
+            class_id=9, name="CParticleSystem", serializer=Serializer("CParticleSystem", 0)
+        )
+
+        def apply(reader, serializer, state):
+            state._set_compact((0,), 456)
+
+        monkeypatch.setattr("gem.state.entities.read_fields", apply)
+        entity = Entity(index=0, serial=0, cls=ci)
+        manager._apply_baseline(entity, ci, b"valid")
+        assert entity._field_state._get_compact((0,)) == 456
+
+
 # ---------------------------------------------------------------------------
 # game_build_from_game_dir
 # ---------------------------------------------------------------------------
