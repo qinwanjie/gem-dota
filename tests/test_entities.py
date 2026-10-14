@@ -1245,6 +1245,82 @@ class TestEntityManagerPacketEntities:
         result = em.on_packet_entities(Msg())
         assert result == []  # 0 updates → empty result, but no early return
 
+    def test_bad_delta_waits_for_full_snapshot_and_records_gap(self):
+        em = self._make_em()
+        em.entities[0] = _entity("Hero", index=0, serial=0)
+
+        class BadDelta:
+            legacy_is_delta = True
+            updated_entries = 1
+            entity_data = b""
+            server_tick = 100
+
+        class GoodDelta:
+            legacy_is_delta = True
+            updated_entries = 0
+            entity_data = b""
+            server_tick = 101
+
+        class FullSnapshot:
+            legacy_is_delta = False
+            updated_entries = 0
+            entity_data = b""
+            server_tick = 120
+
+        em._on_packet_entities(BadDelta())
+        em._on_packet_entities(GoodDelta())
+        assert em.entities[0] is not None
+        em._on_packet_entities(FullSnapshot())
+        assert em.entities[0] is None
+        assert em.entity_packet_gaps == [{
+            "failed_tick": 100,
+            "resumed_tick": 120,
+            "skipped_delta_packets": 1,
+            "error": "BufferReadError: insufficient buffer: need 6 bits at pos 0, size 0",
+        }]
+
+    def test_out_of_range_entity_index_is_a_recoverable_data_error(self):
+        em = self._make_em()
+        em.entities = [None]
+
+        class Msg:
+            legacy_is_delta = True
+            updated_entries = 1
+            entity_data = bytes([1])  # ubit_var(1) -> entity slot 1
+            server_tick = 200
+
+        em._on_packet_entities(Msg())
+        assert em.entity_packet_gaps[0]["failed_tick"] == 200
+        assert "entity index 1 exceeds 1 slots" in str(em.entity_packet_gaps[0]["error"])
+
+    def test_failed_recovery_snapshot_keeps_gap_open(self):
+        em = self._make_em()
+
+        class BadDelta:
+            legacy_is_delta = True
+            updated_entries = 1
+            entity_data = b""
+            server_tick = 100
+
+        class BadFull:
+            legacy_is_delta = False
+            updated_entries = 1
+            entity_data = b""
+            server_tick = 120
+
+        class GoodFull:
+            legacy_is_delta = False
+            updated_entries = 0
+            entity_data = b""
+            server_tick = 140
+
+        em._on_packet_entities(BadDelta())
+        em._on_packet_entities(BadFull())
+        assert len(em.entity_packet_gaps) == 1
+        assert em.entity_packet_gaps[0]["resumed_tick"] is None
+        em._on_packet_entities(GoodFull())
+        assert em.entity_packet_gaps[0]["resumed_tick"] == 140
+
     def test_leave_without_delete(self):
         """cmd=0b01 → LEFT only (entity goes inactive)."""
         em = self._make_em()

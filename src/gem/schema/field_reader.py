@@ -29,6 +29,11 @@ def _resolve_decoder(
     pos: int,
 ) -> FieldDecoder | None:
     """Resolve the decoder for *path* starting at one serializer level."""
+    if pos >= len(path) or path[pos] >= len(serializer.fields):
+        raise ReplayDataError(
+            f"field path {tuple(path)} is outside serializer {serializer.name} "
+            f"({len(serializer.fields)} fields)"
+        )
     f: Field = serializer.fields[path[pos]]
     return _resolve_field_decoder(f, path, pos + 1)
 

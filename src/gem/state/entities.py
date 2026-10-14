@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from gem.binary.reader import BitReader, BufferReadError
-from gem.errors import EntityStateError
+from gem.errors import EntityStateError, ReplayDataError
 from gem.schema.field_path.models import CompactFieldPath
 from gem.schema.field_reader import read_fields
 from gem.schema.field_state import FieldState
@@ -652,6 +652,11 @@ class EntityManager:
         self.class_id_size: int = 0
         self._class_info_ready: bool = False
         self._full_packets: int = 0
+        # A malformed entity packet must not abort unrelated combat-log and
+        # game-event messages. Delta packets are unsafe after a decode failure:
+        # wait for the next full entity snapshot before reading entities again.
+        self._await_full_packet: bool = False
+        self.entity_packet_gaps: list[dict[str, int | str | None]] = []
         # A caller that registers handlers before the schema arrives passes
         # its own tracker.
         self.tracker = tracker if tracker is not None else EntityTracker()
@@ -751,7 +756,52 @@ class EntityManager:
 
     def _on_packet_entities(self, msg: object) -> None:
         """Decode packet entities without collecting unused operation tuples."""
-        self._decode_packet_entities(msg, None)
+        self._decode_recoverably(msg, None)
+
+    def _decode_recoverably(
+        self,
+        msg: object,
+        results: list[tuple[Entity, EntityOp]] | None,
+    ) -> None:
+        """Isolate a damaged entity packet until a full snapshot resynchronizes it.
+
+        This does not pretend the missed entity updates were decoded. Callers
+        can inspect ``entity_packet_gaps`` and treat affected evidence as partial.
+        Other replay messages, including the combat log, continue normally.
+        """
+        is_delta: bool = msg.legacy_is_delta  # type: ignore[attr-defined]
+        tick: int = getattr(msg, "server_tick", 0)
+        resynchronizing = self._await_full_packet and not is_delta
+        if self._await_full_packet:
+            if is_delta:
+                self.entity_packet_gaps[-1]["skipped_delta_packets"] = (
+                    int(self.entity_packet_gaps[-1]["skipped_delta_packets"]) + 1
+                )
+                return
+            self.entities = [None] * len(self.entities)
+            self._full_packets = 0
+            self._await_full_packet = False
+
+        try:
+            self._decode_packet_entities(msg, results)
+        except ReplayDataError as exc:
+            self._await_full_packet = True
+            if not resynchronizing:
+                self.entity_packet_gaps.append({
+                    "failed_tick": tick,
+                    "resumed_tick": None,
+                    "skipped_delta_packets": 0,
+                    "error": f"{type(exc).__name__}: {exc}",
+                })
+            logger.warning(
+                "Entity packet failed at server tick %d; waiting for full snapshot: %s",
+                tick, exc,
+            )
+            if results is not None:
+                results.clear()
+        else:
+            if resynchronizing:
+                self.entity_packet_gaps[-1]["resumed_tick"] = tick
 
     def _decode_packet_entities(
         self,
@@ -773,6 +823,10 @@ class EntityManager:
 
         for _ in range(updates):
             index += r.read_ubit_var() + 1
+            if index >= len(self.entities):
+                raise EntityStateError(
+                    f"entity index {index} exceeds {len(self.entities)} slots"
+                )
             cmd = r.read_bits(2)
 
             if cmd & 0x01 == 0:

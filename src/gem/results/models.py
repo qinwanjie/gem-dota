@@ -1191,6 +1191,7 @@ class ParsedMatch:
     game_clock: GameClock | None = None
     parse_error: str | None = None
     truncated_at_tick: int | None = None
+    entity_packet_gaps: list[dict[str, int | str | None]] = field(default_factory=list)
     runes: list[Rune] = field(default_factory=list)
     # Internal provenance for match-level values copied from CMsgDOTAMatch.
     _match_details_fields: set[str] = field(

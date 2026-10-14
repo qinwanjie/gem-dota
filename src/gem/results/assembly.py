@@ -1432,6 +1432,10 @@ def build_parsed_match(
         duration=duration,
         parse_error=repr(parser.parse_error) if parser.parse_error is not None else None,
         truncated_at_tick=parser.truncated_at_tick,
+        entity_packet_gaps=(
+            list(parser.entity_manager.entity_packet_gaps)
+            if parser.entity_manager is not None else []
+        ),
     )
     clock = parser.game_clock
 

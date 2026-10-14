@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import pytest
 
+from gem.errors import ReplayDataError
 from gem.schema.field_path import FieldPath
 from gem.schema.field_reader import (
     _resolve_cached_decoder,
@@ -389,10 +390,10 @@ class TestDecoderResolutionByModel:
         ):
             _resolve_decoder(serializer, (0, 0), 0)
 
-    def test_invalid_top_level_index_preserves_index_error(self):
+    def test_invalid_top_level_index_is_replay_data_error(self):
         serializer = _make_serializer(_make_field(FIELD_MODEL_SIMPLE, decoder=lambda r: 0))
 
-        with pytest.raises(IndexError):
+        with pytest.raises(ReplayDataError, match="outside serializer"):
             _resolve_decoder(serializer, (5,), 0)
 
 

@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Recover from malformed entity-delta packets at the next full entity snapshot
+  instead of ending the entire replay. Combat logs and independent game events
+  continue to parse; `ParsedMatch.entity_packet_gaps` records every lost entity
+  interval, its failure, and how many deltas were skipped. Consumers must treat
+  entity-derived evidence inside those intervals as partial.
+
 - **`ParsedMatch.runes` and `gem.Rune`** (HY-151): every power, bounty and
   water rune that spawned, from its `CDOTA_Item_Rune` entity: when and where it
   appeared, its type, and how it ended: `picked_up`, `bottled` (with
