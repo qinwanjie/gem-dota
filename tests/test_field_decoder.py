@@ -778,3 +778,27 @@ def test_quantized_flag_edge_cases_match_manta(setup, expected):
 
     q = QuantizedFloatDecoder(*setup)
     assert (q.bitcount, q.flags) == expected
+
+
+class TestFixed8IntegerEncoder:
+    @pytest.mark.parametrize("value", [-128, -1, 0, 1, 23, 127])
+    def test_signed_fixed8_preserves_following_float(self, value):
+        decoder = find_decoder(FakeField(base_type="int8", encoder="fixed8"))
+        reader = BitReader(bytes([value & 255]) + struct.pack("<f", -1.0))
+        assert decoder(reader) == value
+        assert noscale_decoder(reader) == -1.0
+
+    def test_arcana_array_after_presence_bit_stays_aligned(self):
+        decoder = find_decoder(FakeField(base_type="int8", encoder="fixed8"))
+        bits = "1" + "1" * (24 * 8)
+        bits += "".join(format(byte, "08b")[::-1] for byte in struct.pack("<f", -1.0))
+        reader = BitReader(_bits_to_bytes(bits))
+        assert reader.read_boolean() is True
+        assert [decoder(reader) for _ in range(24)] == [-1] * 24
+        assert noscale_decoder(reader) == -1.0
+
+    def test_unsigned_fixed8_and_ordinary_signed_varint_are_distinct(self):
+        assert (
+            find_decoder(FakeField(base_type="uint8", encoder="fixed8"))(BitReader(b"\xff")) == 255
+        )
+        assert find_decoder(FakeField(base_type="int8"))(BitReader(b"\x01")) == -1

@@ -20,7 +20,7 @@ import math
 import re
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 from gem.binary.reader import BitReader, BufferReadError
 from gem.errors import EntityStateError, ReplayDataError
@@ -775,7 +775,7 @@ class EntityManager:
         if self._await_full_packet:
             if is_delta:
                 self.entity_packet_gaps[-1]["skipped_delta_packets"] = (
-                    int(self.entity_packet_gaps[-1]["skipped_delta_packets"]) + 1
+                    cast(int, self.entity_packet_gaps[-1]["skipped_delta_packets"]) + 1
                 )
                 return
             self.entities = [None] * len(self.entities)
@@ -787,15 +787,18 @@ class EntityManager:
         except ReplayDataError as exc:
             self._await_full_packet = True
             if not resynchronizing:
-                self.entity_packet_gaps.append({
-                    "failed_tick": tick,
-                    "resumed_tick": None,
-                    "skipped_delta_packets": 0,
-                    "error": f"{type(exc).__name__}: {exc}",
-                })
+                self.entity_packet_gaps.append(
+                    {
+                        "failed_tick": tick,
+                        "resumed_tick": None,
+                        "skipped_delta_packets": 0,
+                        "error": f"{type(exc).__name__}: {exc}",
+                    }
+                )
             logger.warning(
                 "Entity packet failed at server tick %d; waiting for full snapshot: %s",
-                tick, exc,
+                tick,
+                exc,
             )
             if results is not None:
                 results.clear()
@@ -824,9 +827,7 @@ class EntityManager:
         for _ in range(updates):
             index += r.read_ubit_var() + 1
             if index >= len(self.entities):
-                raise EntityStateError(
-                    f"entity index {index} exceeds {len(self.entities)} slots"
-                )
+                raise EntityStateError(f"entity index {index} exceeds {len(self.entities)} slots")
             cmd = r.read_bits(2)
 
             if cmd & 0x01 == 0:

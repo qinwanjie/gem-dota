@@ -1035,6 +1035,43 @@ class TestBuildParsedMatchHeroName:
         assert m.players[2].hero_name == "npc_dota_hero_axe"
         assert m.players[2].team == 2
 
+    def test_pregame_hero_swap_does_not_label_playing_stats_as_the_old_hero(self):
+        snaps = [
+            _FakePlayerSnapshot(6, 5900, "npc_dota_hero_earthshaker", 3, game_time_s=-3),
+            _FakePlayerSnapshot(8, 5900, "npc_dota_hero_lion", 3, game_time_s=-3),
+            _FakePlayerSnapshot(6, 6000, "npc_dota_hero_lion", 3, game_time_s=0),
+            _FakePlayerSnapshot(8, 6000, "npc_dota_hero_earthshaker", 3, game_time_s=0),
+            # A later transformed entity must not replace the playing identity.
+            _FakePlayerSnapshot(6, 9000, "npc_dota_hero_morphling", 3, game_time_s=100),
+        ]
+        parser = _make_parser()
+        match = build_parsed_match(
+            parser,
+            _make_player_ext(snapshots=snaps),
+            _make_obj_ext(),
+            _make_ward_ext(),
+            _make_courier_ext(),
+            _make_draft_ext(),
+            _make_combat_agg(),
+            [],
+            [],
+        )
+        assert match.players[6].hero_name == "npc_dota_hero_lion"
+        assert match.players[8].hero_name == "npc_dota_hero_earthshaker"
+        assert match.players[6].team == match.players[8].team == 3
+
+    def test_identity_uses_game_clock_when_snapshot_time_is_unavailable(self):
+        from gem.results.assembly import _player_identity_snapshot
+
+        snaps = [
+            _FakePlayerSnapshot(0, 5900, "npc_dota_hero_axe", 2),
+            _FakePlayerSnapshot(0, 6000, "npc_dota_hero_sven", 2),
+        ]
+        clock = GameClock(game_start_tick=6000)
+        assert _player_identity_snapshot(snaps, 0, clock) is snaps[1]
+        assert _player_identity_snapshot(snaps, 1, clock) is None
+        assert _player_identity_snapshot(snaps[:1], 0, clock) is snaps[0]
+
     def test_hero_name_only_for_matching_player(self):
         snaps = [_FakePlayerSnapshot(player_id=1, tick=100, npc_name="npc_dota_hero_sven", team=3)]
         parser = _make_parser()

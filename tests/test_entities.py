@@ -1272,12 +1272,14 @@ class TestEntityManagerPacketEntities:
         assert em.entities[0] is not None
         em._on_packet_entities(FullSnapshot())
         assert em.entities[0] is None
-        assert em.entity_packet_gaps == [{
-            "failed_tick": 100,
-            "resumed_tick": 120,
-            "skipped_delta_packets": 1,
-            "error": "BufferReadError: insufficient buffer: need 6 bits at pos 0, size 0",
-        }]
+        assert em.entity_packet_gaps == [
+            {
+                "failed_tick": 100,
+                "resumed_tick": 120,
+                "skipped_delta_packets": 1,
+                "error": "BufferReadError: insufficient buffer: need 6 bits at pos 0, size 0",
+            }
+        ]
 
     def test_out_of_range_entity_index_is_a_recoverable_data_error(self):
         em = self._make_em()

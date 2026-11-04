@@ -121,14 +121,24 @@ _FIELD_TYPE_DECODERS: dict[str, FieldDecoder] = {
 _FIELD_NAME_DECODERS: dict[str, FieldDecoder] = {}
 
 
+def _fixed8_signed_decoder(r: BitReader) -> int:
+    value = r.read_bits(8)
+    return value - 256 if value & 0x80 else value
+
+
+def _fixed8_unsigned_decoder(r: BitReader) -> int:
+    return r.read_bits(8)
+
+
 def find_decoder(field: _FieldLike) -> FieldDecoder:
     """Return the appropriate decoder for the given field.
 
     Dispatch order:
-    1. Type factories (QAngle, float32, Vector, ...) - need field parameters
-    2. Name overrides
-    3. Direct type -> decoder table
-    4. Default (varuint32)
+    1. Explicit fixed8 integer encoding (recorded send-table metadata)
+    2. Type factories (QAngle, float32, Vector, ...) - need field parameters
+    3. Name overrides
+    4. Direct type -> decoder table
+    5. Default (varuint32)
 
     Args:
         field: An object with ``field_type.base_type``, ``encoder``,
@@ -139,6 +149,17 @@ def find_decoder(field: _FieldLike) -> FieldDecoder:
         A callable ``(BitReader) -> value``.
     """
     base_type = field.field_type.base_type
+
+    # Drow Arcana player IDs use int8[24] with encoder=fixed8. Treating each
+    # 0xff (-1) as a signed varint consumes following values and desynchronizes
+    # both the class baseline and the containing entity packet. The pinned
+    # Manta/Clarity generic int8 fallback predates this encoder; honor the
+    # replay's explicit eight-bit contract without changing ordinary varints.
+    if field.encoder == "fixed8":
+        if base_type == "int8":
+            return _fixed8_signed_decoder
+        if base_type == "uint8":
+            return _fixed8_unsigned_decoder
 
     if base_type in _FIELD_TYPE_FACTORIES:
         return _FIELD_TYPE_FACTORIES[base_type](field)

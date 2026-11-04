@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — Fenguo fork 0.12.0+fenguo.3
+
+- Honor the explicit `fixed8` encoder for signed/unsigned 8-bit fields, including
+  Drow Ranger Arcana's `int8[24]` player-ID array. Reading the `0xff` sentinel as
+  a varint consumed subsequent floats and entity headers, causing apparent
+  truncated baselines and long entity-stream gaps. Decode the recorded byte
+  width and signed value; Arcana baselines and gameplay deltas remain strict.
+- Resolve terminal player hero/team from the first valid gameplay snapshot,
+  after pregame hero swaps, rather than the very first strategy-time snapshot.
+  Preserve a latest-observed fallback for pregame-only recordings; missing
+  identities remain unknown. Do not relabel other players' rows or infer names
+  from public-profile availability.
+- Retain the existing malformed-packet gap diagnostics and narrow cosmetic
+  baseline exceptions. Fix the gap counter's type annotation without changing
+  recovery behavior. See `FENGUO_RELEASES.md` for real-replay verification.
+
 ### Added
 
 - Recover from malformed entity-delta packets at the next full entity snapshot

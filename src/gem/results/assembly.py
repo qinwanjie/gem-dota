@@ -32,6 +32,7 @@ from gem.results.permanent_buffs import permanent_buff_flags
 if TYPE_CHECKING:
     from gem.combat.aggregator import _CombatAggregator
     from gem.combat.log import CombatLogEntry
+    from gem.extractors._snapshots import PlayerStateSnapshot
     from gem.extractors.courier import CourierExtractor
     from gem.extractors.draft import DraftExtractor
     from gem.extractors.gold_ledger import BuybackSpend
@@ -1015,6 +1016,36 @@ def _buyback_spends_by_player(
     return by_player
 
 
+def _player_identity_snapshot(
+    snapshots: Iterable[PlayerStateSnapshot], player_id: int, clock: GameClock
+) -> PlayerStateSnapshot | None:
+    """Prefer the first playing identity after pregame hero swaps settle.
+
+    Hero entities can exchange owners in strategy time. Economy, combat and
+    interval attribution already follow the live owner; using the very first
+    pregame name for the terminal player would attach those stats to the old
+    hero. Prefer the first valid gameplay snapshot, not the last transformed
+    hero/illusion later in the match. A pregame-only recording uses its latest
+    observed identity. No name or team is invented when snapshots are absent.
+
+    Reference: pinned odota/parser Parse.java reads selected hero and player team
+    live in each interval; Clarity Entities.java applies entity updates before
+    exposing the changed state.
+    """
+    fallback = None
+    for snap in snapshots:
+        if snap.player_id != player_id or not snap.npc_name or snap.team not in (2, 3):
+            continue
+        seconds = snap.game_time_s
+        if seconds is None and clock.game_start_tick is not None:
+            seconds = clock.game_seconds_at(snap.tick)
+        if seconds is not None and seconds >= 0:
+            return snap
+        if fallback is None or snap.tick > fallback.tick:
+            fallback = snap
+    return fallback
+
+
 def _populate_player_series(
     match: ParsedMatch,
     *,
@@ -1111,12 +1142,11 @@ def _populate_player_series(
             if snap.player_id == player_id and snap.x is not None and snap.y is not None
         ]
 
-        # Resolve hero name from snapshots
-        for snap in player_ext.snapshots:
-            if snap.player_id == player_id:
-                pp.hero_name = snap.npc_name
-                pp.team = snap.team
-                break
+        # Resolve the playing hero, not an earlier owner before a pregame swap.
+        identity = _player_identity_snapshot(player_ext.snapshots, player_id, clock)
+        if identity is not None:
+            pp.hero_name = identity.npc_name
+            pp.team = identity.team
 
         agg = combat_agg.players.get(player_id)
         if agg is not None:
@@ -1434,7 +1464,8 @@ def build_parsed_match(
         truncated_at_tick=parser.truncated_at_tick,
         entity_packet_gaps=(
             list(parser.entity_manager.entity_packet_gaps)
-            if parser.entity_manager is not None else []
+            if parser.entity_manager is not None
+            else []
         ),
     )
     clock = parser.game_clock
